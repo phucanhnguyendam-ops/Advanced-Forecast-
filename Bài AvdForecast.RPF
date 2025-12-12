@@ -1,0 +1,357 @@
+OPEN DATA "C:\Users\Public\Documents\Estima\WinRATS Pro 10.0\MRTSSM4441USN.xlsx"
+CALENDAR(M) 1992:1
+DATA(FORMAT=XLSX,ORG=COLUMNS,SHEET="Monthly") 1992:01 2025:07 MRTSSM4441USN
+
+set z = MRTSSM4441USN
+
+Set Y = z
+
+set trend = t
+set trend2 = trend*trend
+seasonal(period = 5) seasons
+
+print /seasons
+
+compute startdate = 2020:07
+compute enddate = 2025:07
+
+graph 1
+# Z startdate enddate
+
+compute [integer] tstar = enddate-28
+compute [integer] h = 6
+
+
+***
+***Model 1: ES model
+***
+
+*Model
+
+ESMOOTH(TREND=SELECT,SEASONAL=SELECT,CONSTRAIN,SMOOTHED=SM1,FITTED=FIT1,RESIDS=RES1,FACTORS=SEAS1,FORECAST=FOR1,$
+ STEPS=6) Y startdate enddate
+
+GRAPH(STYLE=LINE,KEY=ABOVE) 2
+# Y startdate enddate
+# FIT1 startdate enddate
+
+
+
+
+*WS Forecast
+
+clear hstepforc1
+
+do time = tstar,(enddate-h)
+ ESMOOTH(TREND=SELECT,SEASONAL=SELECT,CONSTRAIN,INITIAL=START,SMOOTHED=SM,FITTED=FIT,RESIDS=RES,FORECAST=FOR,$
+ STEPS=h,noprint) Y startdate time
+ compute hstepforc1(time+h) = for(time+h)
+end do time
+
+clear hsteperror
+set hsteperror1 tstar+h enddate = Y - hstepforc1
+
+spgraph(vfields=2,hfields=1)
+ graph(header="observations and WS forecasts",key=above) 2
+ # Y (tstar+h) enddate
+ # hstepforc1 (tstar+h) enddate
+ graph(header="WS forecast errors") 1
+ # hsteperror1
+spgraph(done)
+
+
+***
+***BACKTESTING MODEL 1
+***
+linreg Y tstar+h enddate
+# constant hstepforc1
+test(NOZEROS,TITLE='Holden Peel Rationality test 1')
+# 1 2
+# 0 1
+
+*** Mincer Zarmowitz Rationality test (for h > 1) : H0 : unbiased forecasts ***
+boxjenk(ma=h-1,regressors,maxl) hsteperror1 tstar+h enddate
+# constant hstepforc1
+test(NOZEROS,TITLE='Mincer Zarmowitz Rationality test 1')
+# h (h+1)
+# 0 0
+
+
+*** Test H0 : h steps ahead forecast errrors distributed as an MA(h-1) ***
+@bjident hsteperror1 tstar+h enddate
+
+*** Test SIGN, H0: the median of forecast errors is 0)
+set errorpos1 tstar+h enddate = %if(hsteperror1(t)>0.0,1.0,0.0)
+
+compute sign = (%sum(errorpos1)-0.5*float(enddate-(tstar+h)))/(0.5*sqrt(float(enddate-(tstar+h))))
+
+cdf(title="SIGN test 1") normal sign
+
+*** Pesaran - Timmerman directional forecasting test, H0 : movements of observations are not correctly forecasted ***
+
+diff Y / DY
+diff hstepforc1 / dhstepforc1
+
+set spi tstar+h enddate = DY*dhstepforc1
+set sp1 tstar+h enddate = %if(DY(t)>0.0,1.0,0.0)
+set sp2 tstar+h enddate = %if(dhstepforc1(t)>0.0,1.0,0.0)
+set sp tstar+h enddate = %if(spi(t)>0.0,1.0,0.0)
+
+compute p1 = %avg(sp1)
+compute p2 = %avg(sp2)
+compute p = %avg(sp)
+
+compute pst = p1*p2 + (1.0-p1)*(1.0-p2)
+compute varp = pst*(1.0-pst)/(float(enddate-tstar+1))
+compute varpst = (((p2*(1.0-p2)*(2.0*p1^2.0-1.0)^2)*(p1*(1.0-p1)*(2.0*p2^2.0-1.0)^2))/(float(enddate-tstar+1)))+((4.0*p1*p2*(1.0-p1)*(1.0-p2))/(float(enddate-tstar+1))^2)
+compute PT = (p-pst)/sqrt(varp-varpst)
+
+cdf(title="Pesaran Timmerman test with variations 1") normal PT
+disp %ztest(PT)
+
+@bjident %resids startdate enddate
+**********************************************************************************************
+
+
+
+
+**Model 2 : BJ model
+
+*WS forecast
+
+clear hstepforc2
+
+
+@bjdiff(diffs=1,sdiffs=1) Y
+@gmautofit(diffs=%%autod,sdiffs=%%autods,const=%%autoconst,report) Y startdate enddate
+
+do time = tstar,(enddate-h)
+ boxjenk(DEFINE=EQBJ,diffs=%%autod,sdiffs=%%autods,const=%%autoconst,$
+ ar=%%autop,sar=%%autops,ma=%%autoq,sma=%%autoqs,$
+ notrace,noprint) Y startdate time
+ forecast(noprint,model=eqbj,from=time+1,to=time+h,stderrs=stderrsh,results=foreh)
+ compute hstepforc2(time+h) = foreh(1)(time+h)
+end do time
+
+clear hsteperror2
+set hsteperror2 tstar+h enddate = Y - hstepforc2
+
+spgraph(vfields=2,hfields=1)
+ graph(header="observations and WS forecasts",subheader="with model 2",key=above) 2
+ # Y (tstar+h) enddate
+ # hstepforc2 (tstar+h) enddate
+ graph(header="WS forecast errors",subheader="with model 2") 1
+ # hsteperror2
+spgraph(done)
+
+@bjident %resids startdate enddate
+
+
+***BACKTESTING MODEL 2
+
+linreg Y tstar+h enddate
+# constant hstepforc2
+test(NOZEROS,TITLE='Holden Peel Rationality test 2')
+# 1 2
+# 0 1
+
+
+*** Mincer Zarmowitz Rationality test (for h > 1) : H0 : unbiased forecasts ***
+boxjenk(ma=h-1,regressors,maxl) hsteperror2 tstar+h enddate
+# constant hstepforc2
+test(NOZEROS,TITLE='Mincer Zarmowitz Rationality test 2')
+# h (h+1)
+# 0 0
+
+
+*** Test H0 : h steps ahead forecast errrors distributed as an MA(h-1) ***
+@bjident hsteperror2 tstar+h enddate
+
+*** Test SIGN, H0: the median of forecast errors is 0)
+set errorpos2 tstar+h enddate = %if(hsteperror2(t)>0.0,1.0,0.0)
+
+compute sign = (%sum(errorpos2)-0.5*float(enddate-(tstar+h)))/(0.5*sqrt(float(enddate-(tstar+h))))
+
+cdf(title="SIGN test 2") normal sign
+
+*** Pesaran - Timmerman directional forecasting test, H0 : movements of observations are not correctly forecasted ***
+
+diff Y / DY
+diff hstepforc2 / dhstepforc2
+
+set spi tstar+h enddate = DY*dhstepforc2
+set sp1 tstar+h enddate = %if(DY(t)>0.0,1.0,0.0)
+set sp2 tstar+h enddate = %if(dhstepforc2(t)>0.0,1.0,0.0)
+set sp tstar+h enddate = %if(spi(t)>0.0,1.0,0.0)
+
+compute p1 = %avg(sp1)
+compute p2 = %avg(sp2)
+compute p = %avg(sp)
+
+compute pst = p1*p2 + (1.0-p1)*(1.0-p2)
+compute varp = pst*(1.0-pst)/(float(enddate-tstar+1))
+compute varpst = (((p2*(1.0-p2)*(2.0*p1^2.0-1.0)^2)*(p1*(1.0-p1)*(2.0*p2^2.0-1.0)^2))/(float(enddate-tstar+1)))+((4.0*p1*p2*(1.0-p1)*(1.0-p2))/(float(enddate-tstar+1))^2)
+compute PT = (p-pst)/sqrt(varp-varpst)
+
+cdf(title="Pesaran Timmerman test with variations 2") normal PT
+disp %ztest(PT)
+**********************************************************************************************
+
+
+***Model 3 : Metronome.
+*WS forecast
+
+clear hstepforc3
+
+do time = tstar,(enddate-h)
+boxjenk(REGRESSORS,define=eqmet1,diffs=%%autod,sdiffs=%%autods,const=%%autoconst,$
+ ar=%%autop,sar=%%autops,ma=%%autoq,sma=%%autoqs,outliers=standard,notrace) Y startdate enddate
+# constant trend trend2 seasons{2 to -8}
+ forecast(noprint,model=EQMET1,from=time+1,to=time+h,stderrs=stderrsh,results=foreh)
+ compute hstepforc3(time+h) = foreh(1)(time+h)
+end do time
+
+   clear hsteperror3
+   set hsteperror3 tstar+h enddate = Y - hstepforc3
+
+   spgraph(vfields=2,hfields=1)
+    graph(header="observations and WS forecasts",subheader="with metronome model",key=above) 2
+    # Y (tstar+h) enddate
+    # hstepforc3 (tstar+h) enddate
+    graph(header="WS forecast errors",subheader="with metronome model") 1
+    # hsteperror3
+   spgraph(done)
+
+
+
+***Backtesting model 3
+
+*** Holden Peel Rationality test (OK if h = 1) : H0 : unbiased forecasts ***
+
+linreg Y tstar+h enddate
+# constant hstepforc3
+test(NOZEROS,TITLE='Holden Peel Rationality test 3')
+# 1 2
+# 0 1
+
+*** Mincer Zarmowitz Rationality test (for h > 1) : H0 : unbiased forecasts ***
+boxjenk(ma=h-1,regressors,maxl) hsteperror3 tstar+h enddate
+# constant hstepforc3
+test(NOZEROS,TITLE='Mincer Zarmowitz Rationality test 3')
+# h (h+1)
+# 0 0
+
+
+*** Test H0 : h steps ahead forecast errrors distributed as an MA(h-1) ***
+@bjident hsteperror3 tstar+h enddate
+
+
+*** Test SIGN, H0: the median of forecast errors is 0)
+set errorpos3 tstar+h enddate = %if(hsteperror3(t)>0.0,1.0,0.0)
+
+compute sign = (%sum(errorpos3)-0.5*float(enddate-(tstar+h)))/(0.5*sqrt(float(enddate-(tstar+h))))
+
+cdf(title="SIGN test") normal sign
+
+*** Pesaran - Timmerman directional forecasting test, H0 : movements of observations are not correctly forecasted ***
+
+diff Y / DY
+diff hstepforc3 / dhstepforc3
+
+set spi tstar+h enddate = DY*dhstepforc3
+set sp1 tstar+h enddate = %if(DY(t)>0.0,1.0,0.0)
+set sp2 tstar+h enddate = %if(dhstepforc1(t)>0.0,1.0,0.0)
+set sp tstar+h enddate = %if(spi(t)>0.0,1.0,0.0)
+
+compute p1 = %avg(sp1)
+compute p2 = %avg(sp2)
+compute p = %avg(sp)
+
+compute pst = p1*p2 + (1.0-p1)*(1.0-p2)
+compute varp = pst*(1.0-pst)/(float(enddate-tstar+1))
+compute varpst = (((p2*(1.0-p2)*(2.0*p1^2.0-1.0)^2)*(p1*(1.0-p1)*(2.0*p2^2.0-1.0)^2))/(float(enddate-tstar+1)))+((4.0*p1*p2*(1.0-p1)*(1.0-p2))/(float(enddate-tstar+1))^2)
+compute PT = (p-pst)/sqrt(varp-varpst)
+
+
+cdf(title="Pesaran Timmerman test with variations") normal PT
+disp %ztest(PT)
+******************************************************************************************
+
+
+
+*** Usual indicators (RMSE,..) ***
+@uforeerrors(title="Statistical indicators with model 1") Y hstepforc1 tstar+h enddate
+
+@uforeerrors(title="Statistical indicators with model 2") Y hstepforc2 tstar+h enddate
+
+@uforeerrors(title="Statistical indicators with model 3") Y hstepforc3 tstar+h enddate
+
+
+@gnewbold y hstepforc1 hstepforc2 tstar+h enddate
+@gnewbold y hstepforc1 hstepforc3 tstar+h enddate
+@gnewbold y hstepforc2 hstepforc3 tstar+h enddate
+
+@dmariano(criterion=mae) y hstepforc1 hstepforc2 tstar+h enddate
+@dmariano(criterion=mae) y hstepforc2 hstepforc3 tstar+h enddate
+@dmariano(criterion=mae) y hstepforc1 hstepforc3 tstar+h enddate
+
+** Encompassing tests for h = 1 **
+
+linreg y (tstar+h) enddate
+# hstepforc1 hstepforc3 constant
+restrict(title="H0: forecast 1 encompasses forecast 3") 2
+# 1
+# 1 1
+# 2
+# 1 0
+
+restrict(title="H0: forecast 3 encompasses forecast 1") 2
+# 1
+# 1 0
+# 2
+# 1 1
+
+** Encompassing tests for h > 1 **
+
+BOXJENK(REGRESSORS,MA=h-1) y (tstar+h) enddate
+# hstepforc1 hstepforc3 constant
+
+restrict(title="H0: forecast 1 encompasses forecast 3") 2
+# h
+# 1 1
+# h+1
+# 1 0
+
+restrict(title="H0: forecast 3 encompasses forecast 1") 2
+# h
+# 1 0
+# h+1
+# 1 1
+
+
+***out of sample forecast***
+compute hoos = 18
+
+set trend startdate enddate+hoos = t
+set trend2 startdate enddate+hoos = trend*trend
+seasonal(period=5) seasons startdate enddate+4*hoos
+
+forecast(model=EQMET1,from=enddate+1,to=enddate+hoos,stderrs=stderrsh1,print,results=foreoosh1)
+graph(header="OOS forecasts",subheader="metronome model") 2
+# Y startdate enddate
+# foreoosh1(1)
+
+set lower95 enddate+1 enddate+hoos = foreoosh1(1)+%invnormal(0.025)*stderrsh1(1)
+set upper95 enddate+1 enddate+hoos = foreoosh1(1)+%invnormal(0.975)*stderrsh1(1)
+
+graph(key=above,header="OOS forecasts with PI 95%",footer="Metronome model") 4
+# Y enddate-24 enddate+hoos
+# foreoosh1(1) enddate+1 enddate+hoos
+# lower95 enddate+1 enddate+hoos
+# upper95 enddate+1 enddate+hoos
+
+*
+* Values of OOS forecasts
+*
+print(window="OOS forecasts with bounds") enddate+1 enddate+hoos lower95 foreoosh1(1) upper95
+
